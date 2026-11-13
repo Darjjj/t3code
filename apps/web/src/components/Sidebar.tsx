@@ -113,6 +113,21 @@ import {
 } from "../sidebarProjectGrouping";
 import { resolveProjectExpanded, useUiStateStore } from "../uiStateStore";
 import {
+  applyNestedProjectDrop,
+  arrangeNestedProjectGroups,
+  createNestedProjectGroup,
+  deleteNestedProjectGroup,
+  moveNestedProjectGroupBy,
+  moveProjectToNestedGroup,
+  moveProjectWithinNestedGroup,
+  type NestedProjectGroupsState,
+  nestedProjectDropTargetKey,
+  newNestedProjectGroupId,
+  renameNestedProjectGroup,
+  setNestedProjectGroupCollapsed,
+  useNestedProjectGroupsStore,
+} from "../nestedProjectGroupsStore";
+import {
   getThreadKeysToDeselectAfterDelete,
   useThreadSelectionStore,
 } from "../threadSelectionStore";
@@ -267,6 +282,12 @@ import {
   SidebarProjectFolderHeader,
   sidebarFolderRowId,
 } from "./sidebar/SidebarProjectFolderHeader";
+import {
+  SidebarProjectGroupHeader,
+  sidebarProjectGroupRowId,
+  UNGROUPED_PROJECTS_LABEL,
+} from "./sidebar/SidebarProjectGroupHeader";
+import { useNestedProjectGroupDnd } from "./sidebar/useNestedProjectGroupDnd";
 import {
   SidebarDragBoundary,
   SidebarSectionHeader,
@@ -424,6 +445,9 @@ function useSidebarThreads(input: {
   readonly folderGroups: readonly SidebarProjectSnapshot[] | null;
   // Keeps folders with no active threads, so a project the user filtered to or pinned can start one.
   readonly keepEmptyFolders: (group: SidebarProjectSnapshot) => boolean;
+  // Set when Nested Project Groups is on: folders are arranged into these groups.
+  readonly nestedProjectGroups: NestedProjectGroupsState | null;
+  readonly showEmptyNestedGroups: boolean;
 }) {
   const {
     projectScopeKey,
@@ -436,6 +460,8 @@ function useSidebarThreads(input: {
     routeRowThreadKey,
     folderGroups,
     keepEmptyFolders: keepEmpty,
+    nestedProjectGroups,
+    showEmptyNestedGroups,
   } = input;
   // Folders already separate the work, so boring mode has no Working shelf.
   const workingShelfEnabled =
@@ -541,11 +567,39 @@ function useSidebarThreads(input: {
               : EMPTY_THREADS,
           };
         });
+  const projectGroupSections =
+    projectFolders === null || nestedProjectGroups === null
+      ? null
+      : arrangeNestedProjectGroups({
+          state: nestedProjectGroups,
+          folders: projectFolders,
+          projectKeyOf: (folder) => folder.group.projectKey,
+          showEmptyGroups: showEmptyNestedGroups,
+        }).map((section) => {
+          const projectCount = section.folders.length;
+          if (!section.collapsed) return { ...section, projectCount, hiddenThreads: EMPTY_THREADS };
+          // A closed group still shows the open thread under its folder, like a closed folder.
+          return {
+            ...section,
+            projectCount,
+            folders: section.folders.flatMap((folder) => {
+              const threads = routeThreadOnly(folder.threads, routeRowThreadKey);
+              return threads.length === 0 ? [] : [{ ...folder, threads }];
+            }),
+            hiddenThreads: section.folders
+              .flatMap((folder) => [...folder.threads, ...folder.hiddenThreads])
+              .filter((thread) => threadShellKey(thread) !== routeRowThreadKey),
+          };
+        });
   const orderedThreads = [
     ...pinnedThreads,
-    ...(projectFolders === null
-      ? activeThreads
-      : projectFolders.flatMap((folder) => folder.threads)),
+    ...(projectGroupSections !== null
+      ? projectGroupSections.flatMap((section) =>
+          section.folders.flatMap((folder) => folder.threads),
+        )
+      : projectFolders === null
+        ? activeThreads
+        : projectFolders.flatMap((folder) => folder.threads)),
     ...visibleWorkingThreads,
     ...visibleSnoozedThreads,
     ...renderedSettledThreads,
@@ -587,6 +641,7 @@ function useSidebarThreads(input: {
     workingShelfExpanded,
     toggleWorkingShelf: () => setWorkingShelfExpanded((value) => !value),
     projectFolders,
+    projectGroupSections,
     toggleProjectFolder: (group: SidebarProjectSnapshot) => {
       const keys = sidebarFolderExpansionKeys(group);
       setProjectExpanded(keys, !resolveProjectExpanded(projectExpandedById, keys));
@@ -992,6 +1047,12 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
   });
   const boringSidebarEnabled = useClientSettings((settings) => settings.boringSidebarEnabled);
   const folderRowsMultiline = useClientSettings((settings) => settings.boringSidebarMultilineRows);
+  const nestedProjectGroupsEnabled =
+    useClientSettings((settings) => settings.nestedProjectGroupsEnabled) && boringSidebarEnabled;
+  const nestedGroups = useNestedProjectGroupsStore((store) => store.groups);
+  const nestedUngroupedCollapsed = useNestedProjectGroupsStore((store) => store.ungroupedCollapsed);
+  const updateNestedProjectGroups = useNestedProjectGroupsStore((store) => store.update);
+  const [editingNestedGroupId, setEditingNestedGroupId] = useState<string | null>(null);
   const newThreadContext = useHandleNewThread();
   // Row callbacks capture only the handler; the rest of the context changes with the route.
   const { handleNewThread } = newThreadContext;
@@ -1257,6 +1318,169 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     if (isMobile) setOpenMobile(false);
     void handleNewThread(scopeProjectRef(group.environmentId, group.id));
   });
+  const createNestedGroup = useStableCallback((projectKey?: string) => {
+    const id = newNestedProjectGroupId();
+    updateNestedProjectGroups((state) =>
+      createNestedProjectGroup(state, projectKey === undefined ? { id } : { id, projectKey }),
+    );
+    setEditingNestedGroupId(id);
+  });
+  const createEmptyNestedGroup = useStableCallback(() => createNestedGroup());
+  const commitNestedGroupRename = useStableCallback((groupId: string, name: string | null) => {
+    if (name !== null) {
+      updateNestedProjectGroups((state) => renameNestedProjectGroup(state, groupId, name));
+    }
+    setEditingNestedGroupId(null);
+  });
+  const toggleNestedProjectGroup = useStableCallback((groupId: string | null) =>
+    updateNestedProjectGroups((state) =>
+      setNestedProjectGroupCollapsed(
+        state,
+        groupId,
+        !(groupId === null
+          ? state.ungroupedCollapsed
+          : (state.groups.find((group) => group.id === groupId)?.collapsed ?? false)),
+      ),
+    ),
+  );
+  // Open projects, so up and down skip saved members that aren't listed.
+  const nestedOrderableProjectKeys = () =>
+    projectGroups.flatMap((project) => (project.archived ? [] : [project.projectKey]));
+  const nestedProjectFolderMenuItems = (projectKey: string) => {
+    const currentGroup = nestedGroups.find((group) => group.projectKeys.includes(projectKey));
+    const currentGroupId = currentGroup?.id ?? null;
+    const listed = new Set(nestedOrderableProjectKeys());
+    const siblings = currentGroup?.projectKeys.filter((key) => listed.has(key)) ?? [];
+    const index = siblings.indexOf(projectKey);
+    return [
+      {
+        id: "nested-group:menu",
+        label: "Move to Group",
+        icon: "folder",
+        separatorBefore: true,
+        children: [
+          ...nestedGroups.map((group) => ({
+            id: `nested-group:move:${group.id}`,
+            label: group.name,
+            checked: group.id === currentGroupId,
+          })),
+          {
+            id: "nested-group:create",
+            label: "Create New Group…",
+            separatorBefore: nestedGroups.length > 0,
+          },
+          {
+            id: "nested-group:ungrouped",
+            label: "Ungrouped",
+            checked: currentGroupId === null,
+          },
+        ],
+      },
+      ...(currentGroupId === null
+        ? []
+        : [
+            { id: "nested-group:up", label: "Move up in group", disabled: index <= 0 },
+            {
+              id: "nested-group:down",
+              label: "Move down in group",
+              disabled: index < 0 || index >= siblings.length - 1,
+            },
+          ]),
+    ];
+  };
+  /** Returns whether the choice belonged to Nested Project Groups. */
+  const handleNestedProjectFolderMenuChoice = (projectKey: string, choice: string | null) => {
+    if (choice === null || !choice.startsWith("nested-group:")) return false;
+    if (choice === "nested-group:create") {
+      createNestedGroup(projectKey);
+    } else if (choice === "nested-group:ungrouped") {
+      updateNestedProjectGroups((state) => moveProjectToNestedGroup(state, projectKey, null));
+    } else if (choice === "nested-group:up" || choice === "nested-group:down") {
+      const visible = nestedOrderableProjectKeys();
+      const offset = choice === "nested-group:up" ? -1 : 1;
+      updateNestedProjectGroups((state) =>
+        moveProjectWithinNestedGroup(state, projectKey, visible, offset),
+      );
+    } else if (choice.startsWith("nested-group:move:")) {
+      const groupId = choice.slice("nested-group:move:".length);
+      updateNestedProjectGroups((state) => moveProjectToNestedGroup(state, projectKey, groupId));
+    }
+    return true;
+  };
+  const handleNestedProjectGroupContextMenu = useStableCallback(
+    (groupId: string | null, position: { x: number; y: number }) => {
+      const api = readLocalApi();
+      if (!api) return;
+      const index = nestedGroups.findIndex((group) => group.id === groupId);
+      const group = nestedGroups[index];
+      void (async () => {
+        const clicked = await settlePromise(() =>
+          api.contextMenu.show(
+            group === undefined
+              ? [{ id: "create", label: "New group", icon: "folder-plus" }]
+              : [
+                  { id: "rename", label: "Rename group", icon: "pencil" },
+                  { id: "up", label: "Move group up", disabled: index === 0 },
+                  {
+                    id: "down",
+                    label: "Move group down",
+                    disabled: index === nestedGroups.length - 1,
+                  },
+                  { id: "create", label: "New group", icon: "folder-plus", separatorBefore: true },
+                  {
+                    id: "delete",
+                    label: "Delete group…",
+                    icon: "trash",
+                    destructive: true,
+                    separatorBefore: true,
+                  },
+                ],
+            position,
+          ),
+        );
+        if (clicked._tag === "Failure") return;
+        switch (clicked.value) {
+          case "create":
+            createNestedGroup();
+            return;
+          case "rename":
+            if (group) setEditingNestedGroupId(group.id);
+            return;
+          case "up":
+          case "down": {
+            if (!group) return;
+            const offset = clicked.value === "up" ? -1 : 1;
+            updateNestedProjectGroups((state) => moveNestedProjectGroupBy(state, group.id, offset));
+            return;
+          }
+          case "delete": {
+            if (!group) return;
+            const count = group.projectKeys.length;
+            const moved =
+              count === 0
+                ? ""
+                : `Its ${count === 1 ? "project moves" : `${count} projects move`} to ${UNGROUPED_PROJECTS_LABEL}. `;
+            const confirmed = await settlePromise(() =>
+              api.dialogs.confirm(
+                [
+                  `Delete group "${group.name}"?`,
+                  `${moved}No projects, threads, or files are deleted.`,
+                ].join("\n"),
+                { variant: "destructive" },
+              ),
+            );
+            if (confirmed._tag === "Failure" || !confirmed.value) return;
+            updateNestedProjectGroups((state) => deleteNestedProjectGroup(state, group.id));
+            return;
+          }
+        }
+      })();
+    },
+  );
+  const { dnd: nestedProjectDnd, overKey: nestedProjectDropKey } = useNestedProjectGroupDnd(
+    (item, target) =>
+      updateNestedProjectGroups((state) => applyNestedProjectDrop(state, item, target)),
+  );
   const handleProjectFolderContextMenu = useStableCallback(
     (group: SidebarProjectSnapshot, position: { x: number; y: number }) => {
       const api = readLocalApi();
@@ -1275,11 +1499,13 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                   ]
                 : []),
               { id: "project-settings", label: "Project settings", icon: "settings" },
+              ...(nestedProjectGroupsEnabled ? nestedProjectFolderMenuItems(group.projectKey) : []),
             ],
             position,
           ),
         );
         if (clicked._tag === "Failure") return;
+        if (handleNestedProjectFolderMenuChoice(group.projectKey, clicked.value)) return;
         switch (clicked.value) {
           case "new-thread":
             startThreadInProjectFolder(group);
@@ -1322,6 +1548,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     workingShelfExpanded,
     toggleWorkingShelf,
     projectFolders,
+    projectGroupSections,
     toggleProjectFolder,
     renderedSettledThreads,
     visibleSnoozedThreads,
@@ -1351,7 +1578,14 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
         : scopedProjectGroups
       : null,
     keepEmptyFolders: (group) =>
-      scopedProjectGroups.length > 0 || (group.pinned && !group.archived),
+      scopedProjectGroups.length > 0 ||
+      (group.pinned && !group.archived) ||
+      // Nested groups list every open project, so any of them can be organized.
+      (nestedProjectGroupsEnabled && !group.archived && !group.isScratch),
+    nestedProjectGroups: nestedProjectGroupsEnabled
+      ? { groups: nestedGroups, ungroupedCollapsed: nestedUngroupedCollapsed }
+      : null,
+    showEmptyNestedGroups: scopedProjectGroups.length === 0,
   });
 
   // Ranked across environments as the palette ranks them, so one
@@ -1927,7 +2161,9 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
         event.activatorEvent instanceof PointerEvent ? event.activatorEvent.clientY : null,
     });
   };
-  const hasProjectFolders = projectFolders !== null && projectFolders.length > 0;
+  const hasProjectFolders =
+    (projectFolders !== null && projectFolders.length > 0) ||
+    (projectGroupSections !== null && projectGroupSections.length > 0);
   const sidebarListItemsFresh = ((): readonly SidebarListItem[] => {
     const rowsOf = (
       list: readonly EnvironmentThreadShell[],
@@ -3450,6 +3686,65 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                           // Folders draw active rows in their own place below.
                           if (projectFolders !== null && item.section === "active") continue;
                           items.push(renderThreadRow(threadByKey.get(item.key)!, item.section));
+                          continue;
+                        }
+                        if (projectGroupSections !== null && item.marker === "active-placeholder") {
+                          for (const section of projectGroupSections) {
+                            const groupId = section.group?.id ?? null;
+                            items.push(
+                              <SidebarProjectGroupHeader
+                                key={sidebarProjectGroupRowId(groupId)}
+                                group={section.group}
+                                collapsed={section.collapsed}
+                                projectCount={section.projectCount}
+                                hiddenThreads={section.hiddenThreads}
+                                isEditing={groupId !== null && editingNestedGroupId === groupId}
+                                isDropTarget={
+                                  nestedProjectDropKey ===
+                                  nestedProjectDropTargetKey({ kind: "group", groupId })
+                                }
+                                dnd={nestedProjectDnd}
+                                onToggle={toggleNestedProjectGroup}
+                                onContextMenu={handleNestedProjectGroupContextMenu}
+                                onCommitRename={commitNestedGroupRename}
+                                onCreateGroup={createEmptyNestedGroup}
+                              />,
+                            );
+                            for (const folder of section.folders) {
+                              items.push(
+                                <SidebarProjectFolderHeader
+                                  key={`project-folder:${folder.group.projectKey}`}
+                                  group={folder.group}
+                                  collapsed={folder.collapsed}
+                                  hiddenThreads={folder.hiddenThreads}
+                                  onToggle={toggleProjectFolder}
+                                  onNewThread={startThreadInProjectFolder}
+                                  onContextMenu={handleProjectFolderContextMenu}
+                                  nesting={{
+                                    groupId,
+                                    parentRowId: sidebarProjectGroupRowId(groupId),
+                                    isDropTarget:
+                                      nestedProjectDropKey ===
+                                      nestedProjectDropTargetKey({
+                                        kind: "project",
+                                        groupId,
+                                        projectKey: folder.group.projectKey,
+                                      }),
+                                    dnd: nestedProjectDnd,
+                                  }}
+                                />,
+                              );
+                              for (const thread of folder.threads) {
+                                items.push(
+                                  renderThreadRow(
+                                    thread,
+                                    "active",
+                                    sidebarFolderRowId(folder.group.projectKey),
+                                  ),
+                                );
+                              }
+                            }
+                          }
                           continue;
                         }
                         if (projectFolders !== null && item.marker === "active-placeholder") {

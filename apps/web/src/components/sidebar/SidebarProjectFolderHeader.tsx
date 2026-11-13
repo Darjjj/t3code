@@ -5,20 +5,22 @@ import { memo } from "react";
 
 import { cn } from "~/lib/utils";
 import type { SidebarProjectSnapshot } from "../../sidebarProjectGrouping";
+import type { NestedProjectDropTarget } from "../../nestedProjectGroupsStore";
 import { useUiStateStore } from "../../uiStateStore";
 import { resolveSidebarFolderDot, resolveThreadLastVisitedAt } from "../Sidebar.logic";
 import { ProjectFavicon } from "../ProjectFavicon";
 import { Button } from "../ui/button";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
+import type { NestedProjectGroupDnd } from "./useNestedProjectGroupDnd";
 
-const FOLDER_DOT_CLASS_NAME = {
+export const FOLDER_DOT_CLASS_NAME = {
   attention: "bg-warning",
   failed: "bg-error",
   unread: "bg-success",
   working: "bg-info",
 } as const;
 
-const FOLDER_DOT_LABEL = {
+export const FOLDER_DOT_LABEL = {
   attention: ", needs you",
   failed: ", failed",
   unread: ", done",
@@ -28,6 +30,36 @@ const FOLDER_DOT_LABEL = {
 /** The folder's sidebar tree row; its thread rows name it as their parent. */
 export function sidebarFolderRowId(projectKey: string) {
   return `folder:${projectKey}`;
+}
+
+/** The status dot for threads a closed folder or group hides. */
+export function useSidebarFolderDot(
+  hiddenThreads: readonly EnvironmentThreadShell[],
+  collapsed: boolean,
+) {
+  const localLastVisitedAtById = useUiStateStore((state) => state.threadLastVisitedAtById);
+  return collapsed
+    ? resolveSidebarFolderDot(
+        hiddenThreads.map((thread) => ({
+          ...thread,
+          lastVisitedAt: resolveThreadLastVisitedAt(
+            thread.lastVisitedAt,
+            localLastVisitedAtById[
+              scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id))
+            ],
+          ),
+        })),
+      )
+    : null;
+}
+
+/** Set when the folder sits inside a Nested Project Groups section. */
+export interface SidebarProjectFolderNesting {
+  /** Null for Ungrouped Projects. */
+  readonly groupId: string | null;
+  readonly parentRowId: string;
+  readonly isDropTarget: boolean;
+  readonly dnd: NestedProjectGroupDnd;
 }
 
 /**
@@ -42,32 +74,49 @@ export const SidebarProjectFolderHeader = memo(function SidebarProjectFolderHead
   onToggle: (group: SidebarProjectSnapshot) => void;
   onNewThread: (group: SidebarProjectSnapshot) => void;
   onContextMenu: (group: SidebarProjectSnapshot, position: { x: number; y: number }) => void;
+  nesting?: SidebarProjectFolderNesting;
 }) {
-  const { group, collapsed, hiddenThreads } = props;
+  const { group, collapsed, hiddenThreads, nesting } = props;
   const rowId = sidebarFolderRowId(group.projectKey);
-  const localLastVisitedAtById = useUiStateStore((state) => state.threadLastVisitedAtById);
-  const dot = collapsed
-    ? resolveSidebarFolderDot(
-        hiddenThreads.map((thread) => ({
-          ...thread,
-          lastVisitedAt: resolveThreadLastVisitedAt(
-            thread.lastVisitedAt,
-            localLastVisitedAtById[
-              scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id))
-            ],
-          ),
-        })),
-      )
+  const dot = useSidebarFolderDot(hiddenThreads, collapsed);
+  const dropTarget: NestedProjectDropTarget | null = nesting
+    ? { kind: "project", groupId: nesting.groupId, projectKey: group.projectKey }
     : null;
   return (
     <li
       data-testid="sidebar-project-folder"
-      className="group/project-folder relative mt-2 list-none first:mt-0"
+      className={cn(
+        "group/project-folder relative list-none",
+        nesting ? "mt-px" : "mt-2 first:mt-0",
+      )}
+      {...(nesting && dropTarget
+        ? {
+            onDragOver: (event) => nesting.dnd.onDragOver(dropTarget, event),
+            onDragLeave: (event) => nesting.dnd.onDragLeave(dropTarget, event),
+            onDrop: (event) => nesting.dnd.onDrop(dropTarget, event),
+          }
+        : {})}
     >
+      {nesting?.isDropTarget ? (
+        <span
+          aria-hidden
+          data-testid="sidebar-project-folder-drop-indicator"
+          className="pointer-events-none absolute inset-x-1 -top-px h-0.5 rounded-full bg-primary"
+        />
+      ) : null}
       <button
         type="button"
         data-sidebar-row={rowId}
+        data-sidebar-parent={nesting?.parentRowId}
         aria-expanded={!collapsed}
+        {...(nesting
+          ? {
+              draggable: true,
+              onDragStart: (event) =>
+                nesting.dnd.onDragStart({ kind: "project", projectKey: group.projectKey }, event),
+              onDragEnd: nesting.dnd.onDragEnd,
+            }
+          : {})}
         onClick={() => props.onToggle(group)}
         onContextMenu={(event) => {
           event.preventDefault();
