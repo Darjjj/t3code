@@ -79,6 +79,7 @@ function setup(stack: DisposableStack, settings: Partial<ClientSettings>) {
     useNestedProjectGroupsStore.setState({
       groups: previousGroups.groups,
       ungroupedCollapsed: previousGroups.ungroupedCollapsed,
+      showInactiveUngrouped: previousGroups.showInactiveUngrouped,
     }),
   );
   const previousExpanded = useUiStateStore.getState().projectExpandedById;
@@ -109,7 +110,10 @@ function seedGroups(state: NestedProjectGroupsState) {
   useNestedProjectGroupsStore.setState(state);
 }
 
-const adventureGroup = (collapsed = false): NestedProjectGroupsState => ({
+const adventureGroup = (
+  collapsed = false,
+  showInactiveUngrouped = false,
+): NestedProjectGroupsState => ({
   groups: [
     {
       id: "group-adm",
@@ -119,6 +123,7 @@ const adventureGroup = (collapsed = false): NestedProjectGroupsState => ({
     },
   ],
   ungroupedCollapsed: false,
+  showInactiveUngrouped,
 });
 
 const sidebar = () => (
@@ -155,7 +160,8 @@ describe("nested project groups", () => {
     });
     await screen.rerender(sidebar());
     await expect.element(screen.getByText("Auto Dungeon Master")).toBeInTheDocument();
-    expect(folderNames(screen.container)).toEqual(["narrator", "image-gen", "loose"]);
+    // Grouped projects stay listed; the idle ungrouped one hides as the normal sidebar does.
+    expect(folderNames(screen.container)).toEqual(["narrator", "image-gen"]);
 
     __setClientSettingsForTests({
       ...getClientSettings(),
@@ -182,17 +188,17 @@ describe("nested project groups", () => {
 
     await userEvent.click(screen.getByRole("button", { name: /Auto Dungeon Master/ }));
     expect(useNestedProjectGroupsStore.getState().groups[0]!.collapsed).toBe(true);
-    expect(folderNames(screen.container)).toEqual(["loose"]);
+    expect(folderNames(screen.container)).toEqual([]);
 
     await userEvent.click(screen.getByRole("button", { name: /Auto Dungeon Master/ }));
-    expect(folderNames(screen.container)).toEqual(["narrator", "image-gen", "loose"]);
+    expect(folderNames(screen.container)).toEqual(["narrator", "image-gen"]);
     await expect.element(screen.getByText("Planning").first()).not.toBeInTheDocument();
   });
 
   it("moves a project into a group from its menu and back to Ungrouped", async () => {
     using stack = new DisposableStack();
     setup(stack, { nestedProjectGroupsEnabled: true });
-    seedGroups(adventureGroup());
+    seedGroups(adventureGroup(false, true));
     await using screen = await render(sidebar());
 
     const openMoveMenu = async () => {
@@ -225,6 +231,7 @@ describe("nested project groups", () => {
         { id: "group-other", name: "Other Projects", projectKeys: [], collapsed: false },
       ],
       ungroupedCollapsed: false,
+      showInactiveUngrouped: true,
     });
     await using screen = await render(sidebar());
     const loose = screen.getByRole("button", { name: "loose", exact: true });
@@ -266,9 +273,15 @@ describe("nested project groups", () => {
     seedGroups(EMPTY_NESTED_PROJECT_GROUPS);
     await using screen = await render(sidebar());
 
-    // Every open project starts in Ungrouped, idle ones included.
+    // Idle projects hide until shown, so they can be organized without cluttering the list.
     await expect.element(screen.getByText("Ungrouped Projects")).toBeInTheDocument();
+    expect(folderNames(screen.container)).toEqual(["image-gen"]);
+    await userEvent.click(screen.getByRole("button", { name: "Show 2 inactive projects" }));
     expect(folderNames(screen.container).toSorted()).toEqual(["image-gen", "loose", "narrator"]);
+    await userEvent.click(screen.getByRole("button", { name: "Hide inactive projects" }));
+    expect(folderNames(screen.container)).toEqual(["image-gen"]);
+    expect(useNestedProjectGroupsStore.getState().showInactiveUngrouped).toBe(false);
+    await userEvent.click(screen.getByRole("button", { name: "Show 2 inactive projects" }));
 
     await userEvent.click(screen.getByRole("button", { name: "narrator", exact: true }), {
       button: "right",

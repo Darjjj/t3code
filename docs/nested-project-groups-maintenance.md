@@ -23,7 +23,7 @@ differs from the installed app only by this feature.
   while `boringSidebarEnabled` is on. Like the boring sidebar toggle, it is device-local.
 - **Organization data.** `apps/web/src/nestedProjectGroupsStore.ts` is a zustand store persisted
   to `localStorage` under `t3code:nested-project-groups:v1`. It holds the groups (stable random
-  `id`, `name`, ordered `projectKeys`, `collapsed`) and `ungroupedCollapsed`. Every read goes
+  `id`, `name`, ordered `projectKeys`, `collapsed`), `ungroupedCollapsed`, and `showInactiveUngrouped`. Every read goes
   through `sanitizeNestedProjectGroups`, so corrupt data is repaired entry by entry.
   - It is deliberately _not_ stored in client settings. That struct is decoded strictly as a
     whole, so a bad entry could reset every client setting, and upstream builds drop unknown
@@ -42,8 +42,10 @@ differs from the installed app only by this feature.
 - **Rendering.** `useSidebarThreads` in `Sidebar.tsx` runs `arrangeNestedProjectGroups` over the
   existing project folders before building `orderedThreadKeys`. That keeps keyboard navigation,
   jump hints, and range selection in visual order. While the feature is on, every open
-  (non-archived, non-scratch) project gets a folder, even without active threads, so it can be
-  organized.
+  (non-archived, non-scratch) project gets a folder, even without active threads, so grouped
+  projects stay listed. `arrangeNestedProjectGroups` then hides inactive _ungrouped_ folders
+  behind a "Show N inactive projects" row (unless a project filter is active), so settling a
+  project's last thread still removes it from Ungrouped like the plain sidebar.
 - **Drag and drop.** Native HTML5 drag on the group and folder headers, with a private MIME type
   (`components/sidebar/useNestedProjectGroupDnd.ts`). It does not use or interfere with dnd-kit,
   which owns thread rows, or with file drops onto threads. Drop rules are pure functions

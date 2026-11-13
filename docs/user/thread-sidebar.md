@@ -162,8 +162,10 @@ section is off. Each device keeps its own choice.
 #### Nested project groups (beta)
 
 With the boring sidebar on, turn on **Settings → Labs → Nested Project Groups** to put project
-folders in collapsible groups. Every open project is listed, starting under **Ungrouped
-Projects**. Right-click a project and choose **Move to Group** to pick a group, create one, or
+folders in collapsible groups. Projects start under **Ungrouped Projects**, where, as in the
+plain sidebar, a project without active threads is hidden; choose **Show inactive projects** at
+the bottom of that section to list them so you can organize them. Projects you put in a group
+stay listed even when they have no active threads. Right-click a project and choose **Move to Group** to pick a group, create one, or
 return it to Ungrouped, or drag a project onto a group or onto another project to place it
 there. Drag a group onto another group to reorder, or use the group's menu to rename, move, or
 delete it. Deleting a group moves its projects back to Ungrouped; it never deletes projects,

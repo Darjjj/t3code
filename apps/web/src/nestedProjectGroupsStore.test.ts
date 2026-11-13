@@ -19,6 +19,7 @@ import {
   reorderNestedProjectGroup,
   sanitizeNestedProjectGroups,
   setNestedProjectGroupCollapsed,
+  setShowInactiveUngroupedProjects,
 } from "./nestedProjectGroupsStore";
 
 function stateWith(
@@ -27,6 +28,7 @@ function stateWith(
   return {
     groups: groups.map(([id, projectKeys]) => ({ id, name: id, projectKeys, collapsed: false })),
     ungroupedCollapsed: false,
+    showInactiveUngrouped: false,
   };
 }
 
@@ -60,8 +62,10 @@ describe("nested project group edits", () => {
         folders: ["env:image-gen"],
         projectKeyOf: (key) => key,
         showEmptyGroups: true,
+        isInactive: () => false,
+        showInactiveUngrouped: false,
       }),
-    ).toEqual([{ group: null, collapsed: false, folders: ["env:image-gen"] }]);
+    ).toEqual([{ group: null, collapsed: false, folders: ["env:image-gen"], inactiveCount: 0 }]);
   });
 
   it("names new groups uniquely and refuses duplicate ids", () => {
@@ -171,47 +175,74 @@ describe("nested project drag and drop", () => {
 
 describe("arrangeNestedProjectGroups", () => {
   const folders = ["pinned", "p1", "p2", "p3", "p4"];
-  const arrange = (state: NestedProjectGroupsState, showEmptyGroups = true) =>
+  const arrange = (
+    state: NestedProjectGroupsState,
+    showEmptyGroups = true,
+    inactive: readonly string[] = [],
+  ) =>
     arrangeNestedProjectGroups({
       state,
       folders,
       projectKeyOf: (key) => key,
       showEmptyGroups,
-    }).map((section) => [section.group?.id ?? "ungrouped", section.folders]);
+      isInactive: (key) => inactive.includes(key),
+      showInactiveUngrouped: state.showInactiveUngrouped,
+    }).map((section) => [section.group?.id ?? "ungrouped", section.folders, section.inactiveCount]);
 
   it("lists groups in saved order, then Ungrouped in sidebar order", () => {
     const state = stateWith(["adm", ["p3", "p1"]], ["empty", []]);
     expect(arrange(state)).toEqual([
-      ["adm", ["p3", "p1"]],
-      ["empty", []],
-      ["ungrouped", ["pinned", "p2", "p4"]],
+      ["adm", ["p3", "p1"], 0],
+      ["empty", [], 0],
+      ["ungrouped", ["pinned", "p2", "p4"], 0],
     ]);
     // A project filter hides groups with nothing to show.
     expect(arrange(state, false)).toEqual([
-      ["adm", ["p3", "p1"]],
-      ["ungrouped", ["pinned", "p2", "p4"]],
+      ["adm", ["p3", "p1"], 0],
+      ["ungrouped", ["pinned", "p2", "p4"], 0],
     ]);
   });
 
   it("ignores saved projects that are missing and keeps them for when they return", () => {
     const state = stateWith(["adm", ["removed", "p2"]]);
     expect(arrange(state)).toEqual([
-      ["adm", ["p2"]],
-      ["ungrouped", ["pinned", "p1", "p3", "p4"]],
+      ["adm", ["p2"], 0],
+      ["ungrouped", ["pinned", "p1", "p3", "p4"], 0],
     ]);
     expect(state.groups[0]!.projectKeys).toEqual(["removed", "p2"]);
   });
 
   it("shows every project in Ungrouped before any group exists, and nothing without projects", () => {
-    expect(arrange(EMPTY_NESTED_PROJECT_GROUPS)).toEqual([["ungrouped", folders]]);
+    expect(arrange(EMPTY_NESTED_PROJECT_GROUPS)).toEqual([["ungrouped", folders, 0]]);
     expect(
       arrangeNestedProjectGroups({
         state: EMPTY_NESTED_PROJECT_GROUPS,
         folders: [],
         projectKeyOf: (key: string) => key,
         showEmptyGroups: true,
+        isInactive: () => false,
+        showInactiveUngrouped: false,
       }),
     ).toEqual([]);
+  });
+
+  it("hides inactive ungrouped projects until shown, but keeps grouped ones listed", () => {
+    const state = stateWith(["adm", ["p1"]]);
+    expect(arrange(state, true, ["p1", "p2", "p4"])).toEqual([
+      ["adm", ["p1"], 0],
+      ["ungrouped", ["pinned", "p3"], 2],
+    ]);
+    expect(
+      arrange(setShowInactiveUngroupedProjects(state, true), true, ["p1", "p2", "p4"]),
+    ).toEqual([
+      ["adm", ["p1"], 0],
+      ["ungrouped", ["pinned", "p2", "p3", "p4"], 2],
+    ]);
+    // With every ungrouped project inactive the section stays, so they can still be shown.
+    expect(arrange(state, true, ["pinned", "p2", "p3", "p4"])).toEqual([
+      ["adm", ["p1"], 0],
+      ["ungrouped", [], 4],
+    ]);
   });
 });
 
@@ -232,13 +263,16 @@ describe("nested project groups persistence", () => {
   });
 
   it("reads back what it wrote, as after a restart", () => {
-    const state = setNestedProjectGroupCollapsed(
-      createNestedProjectGroup(EMPTY_NESTED_PROJECT_GROUPS, {
-        id: "adm",
-        name: "Auto Dungeon Master",
-        projectKey: "env:image-gen",
-      }),
-      "adm",
+    const state = setShowInactiveUngroupedProjects(
+      setNestedProjectGroupCollapsed(
+        createNestedProjectGroup(EMPTY_NESTED_PROJECT_GROUPS, {
+          id: "adm",
+          name: "Auto Dungeon Master",
+          projectKey: "env:image-gen",
+        }),
+        "adm",
+        true,
+      ),
       true,
     );
     persistNestedProjectGroups(state);
@@ -260,6 +294,7 @@ describe("sanitizeNestedProjectGroups", () => {
         { id: "other", name: "Other Projects", projectKeys: [], collapsed: false },
       ],
       ungroupedCollapsed: true,
+      showInactiveUngrouped: true,
     };
     expect(
       sanitizeNestedProjectGroups(JSON.parse(JSON.stringify({ version: 1, ...state }))),
@@ -280,6 +315,7 @@ describe("sanitizeNestedProjectGroups", () => {
           { id: "b", name: "B", projectKeys: ["p2", "p3"] },
         ],
         ungroupedCollapsed: 1,
+        showInactiveUngrouped: "yes",
       }),
     ).toEqual({
       groups: [
@@ -288,6 +324,7 @@ describe("sanitizeNestedProjectGroups", () => {
         { id: "b", name: "B", projectKeys: ["p3"], collapsed: false },
       ],
       ungroupedCollapsed: false,
+      showInactiveUngrouped: false,
     });
   });
 });

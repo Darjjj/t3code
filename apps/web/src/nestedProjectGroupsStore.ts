@@ -17,11 +17,14 @@ export interface NestedProjectGroup {
 export interface NestedProjectGroupsState {
   readonly groups: readonly NestedProjectGroup[];
   readonly ungroupedCollapsed: boolean;
+  /** Lists ungrouped projects with no active threads, which hide like the normal sidebar's. */
+  readonly showInactiveUngrouped: boolean;
 }
 
 export const EMPTY_NESTED_PROJECT_GROUPS: NestedProjectGroupsState = {
   groups: [],
   ungroupedCollapsed: false,
+  showInactiveUngrouped: false,
 };
 
 function normalizeGroupName(value: unknown): string | null {
@@ -33,7 +36,11 @@ function normalizeGroupName(value: unknown): string | null {
 /** Repairs anything read from storage: unknown shapes, duplicate ids, and projects in two groups. */
 export function sanitizeNestedProjectGroups(value: unknown): NestedProjectGroupsState {
   if (!value || typeof value !== "object") return EMPTY_NESTED_PROJECT_GROUPS;
-  const raw = value as { groups?: unknown; ungroupedCollapsed?: unknown };
+  const raw = value as {
+    groups?: unknown;
+    ungroupedCollapsed?: unknown;
+    showInactiveUngrouped?: unknown;
+  };
   const seenIds = new Set<string>();
   const claimedProjectKeys = new Set<string>();
   const groups: NestedProjectGroup[] = [];
@@ -55,7 +62,11 @@ export function sanitizeNestedProjectGroups(value: unknown): NestedProjectGroups
       collapsed: group.collapsed === true,
     });
   }
-  return { groups, ungroupedCollapsed: raw.ungroupedCollapsed === true };
+  return {
+    groups,
+    ungroupedCollapsed: raw.ungroupedCollapsed === true,
+    showInactiveUngrouped: raw.showInactiveUngrouped === true,
+  };
 }
 
 export function nextNestedProjectGroupName(state: NestedProjectGroupsState): string {
@@ -227,6 +238,13 @@ export function setNestedProjectGroupCollapsed(
   };
 }
 
+export function setShowInactiveUngroupedProjects(
+  state: NestedProjectGroupsState,
+  show: boolean,
+): NestedProjectGroupsState {
+  return state.showInactiveUngrouped === show ? state : { ...state, showInactiveUngrouped: show };
+}
+
 export type NestedProjectDragItem =
   | { readonly kind: "project"; readonly projectKey: string }
   | { readonly kind: "group"; readonly groupId: string };
@@ -269,12 +287,15 @@ export interface NestedProjectGroupSection<TFolder> {
   readonly group: NestedProjectGroup | null;
   readonly collapsed: boolean;
   readonly folders: readonly TFolder[];
+  /** Ungrouped projects with no active threads, listed or not. Always 0 for custom groups. */
+  readonly inactiveCount: number;
 }
 
 /**
  * Arranges sidebar project folders into groups. Custom groups list their folders in saved
  * order and Ungrouped keeps input order. Saved keys whose project is not listed are ignored,
- * so a project that disappears and returns lands back in its group.
+ * so a project that disappears and returns lands back in its group. Inactive ungrouped
+ * folders hide unless shown, as the normal sidebar hides them; grouped ones stay listed.
  */
 export function arrangeNestedProjectGroups<TFolder>(input: {
   readonly state: NestedProjectGroupsState;
@@ -282,6 +303,8 @@ export function arrangeNestedProjectGroups<TFolder>(input: {
   readonly projectKeyOf: (folder: TFolder) => string;
   /** Keeps custom groups with no listed folder, so a new group can take a project. */
   readonly showEmptyGroups: boolean;
+  readonly isInactive: (folder: TFolder) => boolean;
+  readonly showInactiveUngrouped: boolean;
 }): NestedProjectGroupSection<TFolder>[] {
   const folderByKey = new Map(input.folders.map((folder) => [input.projectKeyOf(folder), folder]));
   const grouped = new Set<string>();
@@ -294,11 +317,18 @@ export function arrangeNestedProjectGroups<TFolder>(input: {
       return [folder];
     });
     if (folders.length === 0 && !input.showEmptyGroups) continue;
-    sections.push({ group, collapsed: group.collapsed, folders });
+    sections.push({ group, collapsed: group.collapsed, folders, inactiveCount: 0 });
   }
   const ungrouped = input.folders.filter((folder) => !grouped.has(input.projectKeyOf(folder)));
+  const active = ungrouped.filter((folder) => !input.isInactive(folder));
+  // Kept while everything in it is inactive, so the way to show those projects stays reachable.
   if (ungrouped.length > 0) {
-    sections.push({ group: null, collapsed: input.state.ungroupedCollapsed, folders: ungrouped });
+    sections.push({
+      group: null,
+      collapsed: input.state.ungroupedCollapsed,
+      folders: input.showInactiveUngrouped ? ungrouped : active,
+      inactiveCount: ungrouped.length - active.length,
+    });
   }
   return sections;
 }
@@ -328,6 +358,7 @@ export function persistNestedProjectGroups(state: NestedProjectGroupsState): voi
         version: 1,
         groups: state.groups,
         ungroupedCollapsed: state.ungroupedCollapsed,
+        showInactiveUngrouped: state.showInactiveUngrouped,
       }),
     );
   } catch {}
@@ -338,7 +369,11 @@ interface NestedProjectGroupsStore extends NestedProjectGroupsState {
 }
 
 function pickState(store: NestedProjectGroupsState): NestedProjectGroupsState {
-  return { groups: store.groups, ungroupedCollapsed: store.ungroupedCollapsed };
+  return {
+    groups: store.groups,
+    ungroupedCollapsed: store.ungroupedCollapsed,
+    showInactiveUngrouped: store.showInactiveUngrouped,
+  };
 }
 
 export const useNestedProjectGroupsStore = create<NestedProjectGroupsStore>((set, get) => ({

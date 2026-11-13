@@ -64,6 +64,7 @@ import type { OlderSettledScope } from "@t3tools/client-runtime/state/threads";
 import {
   CheckIcon,
   ChevronDownIcon,
+  ChevronUpIcon,
   FolderIcon,
   ListFilterIcon,
   PlusIcon,
@@ -125,6 +126,7 @@ import {
   newNestedProjectGroupId,
   renameNestedProjectGroup,
   setNestedProjectGroupCollapsed,
+  setShowInactiveUngroupedProjects,
   useNestedProjectGroupsStore,
 } from "../nestedProjectGroupsStore";
 import {
@@ -575,6 +577,14 @@ function useSidebarThreads(input: {
           folders: projectFolders,
           projectKeyOf: (folder) => folder.group.projectKey,
           showEmptyGroups: showEmptyNestedGroups,
+          // Pinned projects stay listed, as in the normal sidebar.
+          isInactive: (folder) =>
+            folder.threads.length === 0 &&
+            folder.hiddenThreads.length === 0 &&
+            !folder.group.pinned,
+          // A project filter lists every chosen project, active or not.
+          showInactiveUngrouped:
+            nestedProjectGroups.showInactiveUngrouped || !showEmptyNestedGroups,
         }).map((section) => {
           const projectCount = section.folders.length;
           if (!section.collapsed) return { ...section, projectCount, hiddenThreads: EMPTY_THREADS };
@@ -1051,6 +1061,9 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     useClientSettings((settings) => settings.nestedProjectGroupsEnabled) && boringSidebarEnabled;
   const nestedGroups = useNestedProjectGroupsStore((store) => store.groups);
   const nestedUngroupedCollapsed = useNestedProjectGroupsStore((store) => store.ungroupedCollapsed);
+  const nestedShowInactiveUngrouped = useNestedProjectGroupsStore(
+    (store) => store.showInactiveUngrouped,
+  );
   const updateNestedProjectGroups = useNestedProjectGroupsStore((store) => store.update);
   const [editingNestedGroupId, setEditingNestedGroupId] = useState<string | null>(null);
   const newThreadContext = useHandleNewThread();
@@ -1326,6 +1339,11 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     setEditingNestedGroupId(id);
   });
   const createEmptyNestedGroup = useStableCallback(() => createNestedGroup());
+  const toggleInactiveUngroupedProjects = useStableCallback(() =>
+    updateNestedProjectGroups((state) =>
+      setShowInactiveUngroupedProjects(state, !state.showInactiveUngrouped),
+    ),
+  );
   const commitNestedGroupRename = useStableCallback((groupId: string, name: string | null) => {
     if (name !== null) {
       updateNestedProjectGroups((state) => renameNestedProjectGroup(state, groupId, name));
@@ -1583,7 +1601,11 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
       // Nested groups list every open project, so any of them can be organized.
       (nestedProjectGroupsEnabled && !group.archived && !group.isScratch),
     nestedProjectGroups: nestedProjectGroupsEnabled
-      ? { groups: nestedGroups, ungroupedCollapsed: nestedUngroupedCollapsed }
+      ? {
+          groups: nestedGroups,
+          ungroupedCollapsed: nestedUngroupedCollapsed,
+          showInactiveUngrouped: nestedShowInactiveUngrouped,
+        }
       : null,
     showEmptyNestedGroups: scopedProjectGroups.length === 0,
   });
@@ -3743,6 +3765,32 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                                   ),
                                 );
                               }
+                            }
+                            if (
+                              section.group === null &&
+                              !section.collapsed &&
+                              section.inactiveCount > 0
+                            ) {
+                              items.push(
+                                <li key="project-group:ungrouped:inactive" className="list-none">
+                                  <button
+                                    type="button"
+                                    data-sidebar-row="project-group:ungrouped:inactive"
+                                    data-sidebar-parent={sidebarProjectGroupRowId(null)}
+                                    onClick={toggleInactiveUngroupedProjects}
+                                    className="flex h-9 w-full cursor-pointer items-center gap-2.5 rounded-md px-2.5 text-left text-sm text-sidebar-muted-foreground hover:bg-sidebar-row-hover hover:text-sidebar-foreground"
+                                  >
+                                    {nestedShowInactiveUngrouped ? (
+                                      <ChevronUpIcon aria-hidden className="size-4 shrink-0" />
+                                    ) : (
+                                      <ChevronDownIcon aria-hidden className="size-4 shrink-0" />
+                                    )}
+                                    {nestedShowInactiveUngrouped
+                                      ? "Hide inactive projects"
+                                      : `Show ${section.inactiveCount} inactive ${section.inactiveCount === 1 ? "project" : "projects"}`}
+                                  </button>
+                                </li>,
+                              );
                             }
                           }
                           continue;
