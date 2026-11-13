@@ -3699,6 +3699,36 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                         );
                       };
                       const from = isContextDrag ? null : (dragState?.activeSection ?? null);
+                      const ungroupedSection = projectGroupSections?.find(
+                        (section) => section.group === null,
+                      );
+                      const inactiveCount =
+                        ungroupedSection && !ungroupedSection.collapsed
+                          ? ungroupedSection.inactiveCount
+                          : 0;
+                      // Sits directly above the bottom shelves, so it takes their mt-auto.
+                      let inactiveProjectsToggle: ReactNode =
+                        inactiveCount > 0 ? (
+                          <li key="project-group:ungrouped:inactive" className="mt-auto list-none">
+                            <button
+                              type="button"
+                              data-sidebar-row="project-group:ungrouped:inactive"
+                              data-sidebar-parent={sidebarProjectGroupRowId(null)}
+                              onClick={toggleInactiveUngroupedProjects}
+                              className="flex h-9 w-full cursor-pointer items-center gap-2.5 rounded-md px-2.5 text-left text-sm text-sidebar-muted-foreground hover:bg-sidebar-row-hover hover:text-sidebar-foreground"
+                            >
+                              {nestedShowInactiveUngrouped ? (
+                                <ChevronUpIcon aria-hidden className="size-4 shrink-0" />
+                              ) : (
+                                <ChevronDownIcon aria-hidden className="size-4 shrink-0" />
+                              )}
+                              {nestedShowInactiveUngrouped
+                                ? "Hide inactive projects"
+                                : `Show ${inactiveCount} inactive ${inactiveCount === 1 ? "project" : "projects"}`}
+                            </button>
+                          </li>
+                        ) : null;
+                      const shelvesFloat = inactiveProjectsToggle === null;
                       const items: ReactNode[] = [
                         <SidebarDraftBlock
                           key="draft-sessions"
@@ -3710,6 +3740,11 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                           onDraftContextMenu={handleDraftContextMenu}
                         />,
                       ];
+                      const pushInactiveProjectsToggle = () => {
+                        if (inactiveProjectsToggle === null) return;
+                        items.push(inactiveProjectsToggle);
+                        inactiveProjectsToggle = null;
+                      };
                       for (const item of sidebarListItems) {
                         if (item.kind === "thread") {
                           // Folders draw active rows in their own place below.
@@ -3772,32 +3807,6 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                                   ),
                                 );
                               }
-                            }
-                            if (
-                              section.group === null &&
-                              !section.collapsed &&
-                              section.inactiveCount > 0
-                            ) {
-                              items.push(
-                                <li key="project-group:ungrouped:inactive" className="list-none">
-                                  <button
-                                    type="button"
-                                    data-sidebar-row="project-group:ungrouped:inactive"
-                                    data-sidebar-parent={sidebarProjectGroupRowId(null)}
-                                    onClick={toggleInactiveUngroupedProjects}
-                                    className="flex h-9 w-full cursor-pointer items-center gap-2.5 rounded-md px-2.5 text-left text-sm text-sidebar-muted-foreground hover:bg-sidebar-row-hover hover:text-sidebar-foreground"
-                                  >
-                                    {nestedShowInactiveUngrouped ? (
-                                      <ChevronUpIcon aria-hidden className="size-4 shrink-0" />
-                                    ) : (
-                                      <ChevronDownIcon aria-hidden className="size-4 shrink-0" />
-                                    )}
-                                    {nestedShowInactiveUngrouped
-                                      ? "Hide inactive projects"
-                                      : `Show ${section.inactiveCount} inactive ${section.inactiveCount === 1 ? "project" : "projects"}`}
-                                  </button>
-                                </li>,
-                              );
                             }
                           }
                           continue;
@@ -3869,11 +3878,12 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                             );
                             break;
                           case "working-header":
+                            pushInactiveProjectsToggle();
                             items.push(
                               <SidebarSectionHeader
                                 key="working-shelf-header"
                                 marker="working-header"
-                                className="mt-auto"
+                                className={cn(shelvesFloat && "mt-auto")}
                                 label="Working"
                                 count={workingThreads.length}
                                 toggle={{
@@ -3884,11 +3894,14 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                             );
                             break;
                           case "snoozed-header":
+                            pushInactiveProjectsToggle();
                             items.push(
                               <SidebarSectionHeader
                                 key="snoozed-shelf-header"
                                 marker="snoozed-header"
-                                className={cn(workingThreads.length === 0 && "mt-auto")}
+                                className={cn(
+                                  shelvesFloat && workingThreads.length === 0 && "mt-auto",
+                                )}
                                 label="Snoozed"
                                 count={snoozedThreads.length}
                                 toggle={{
@@ -3899,12 +3912,15 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                             );
                             break;
                           case "settled-header":
+                            pushInactiveProjectsToggle();
                             items.push(
                               <SidebarSectionHeader
                                 key="settled-shelf-header"
                                 marker="settled-header"
                                 className={cn(
-                                  workingThreads.length + snoozedThreads.length === 0 && "mt-auto",
+                                  shelvesFloat &&
+                                    workingThreads.length + snoozedThreads.length === 0 &&
+                                    "mt-auto",
                                 )}
                                 label="Settled"
                                 count={settledCount}

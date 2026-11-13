@@ -279,7 +279,11 @@ describe("nested project groups", () => {
     // Idle projects hide until shown, so they can be organized without cluttering the list.
     await expect.element(screen.getByText("Ungrouped Projects")).toBeInTheDocument();
     expect(folderNames(screen.container)).toEqual(["image-gen"]);
-    await userEvent.click(screen.getByRole("button", { name: "Show 2 inactive projects" }));
+    const inactiveToggle = screen.getByRole("button", { name: "Show 2 inactive projects" });
+    expect(
+      inactiveToggle.element().closest("li")?.nextElementSibling?.getAttribute("data-testid"),
+    ).toBe("sidebar-settled-header");
+    await userEvent.click(inactiveToggle);
     expect(folderNames(screen.container).toSorted()).toEqual(["image-gen", "loose", "narrator"]);
     await userEvent.click(screen.getByRole("button", { name: "Hide inactive projects" }));
     expect(folderNames(screen.container)).toEqual(["image-gen"]);
