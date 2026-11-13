@@ -10,6 +10,7 @@ import { describe, expect, it, vi } from "vite-plus/test";
 import { userEvent } from "vite-plus/test/browser";
 
 import { render } from "../../test/render";
+import { requestConfirmDialog } from "../confirmDialog";
 import { useHandleNewThread } from "../hooks/useHandleNewThread";
 import { __setClientSettingsForTests, getClientSettings } from "../hooks/useSettings";
 import { useThreadRouteTarget } from "../hooks/useThreadRouteTarget";
@@ -29,6 +30,8 @@ import { SidebarProvider } from "./ui/sidebar";
 vi.mock("../state/entities", { spy: true });
 vi.mock("../hooks/useHandleNewThread", { spy: true });
 vi.mock("../hooks/useThreadRouteTarget", { spy: true });
+// No themed dialog host is mounted here; a test answers the confirmation itself.
+vi.mock("../confirmDialog", { spy: true });
 vi.mock("../commandPaletteBus", () => ({
   openCommandPalette: vi.fn(),
   isCommandPaletteOpen: () => false,
@@ -186,11 +189,11 @@ describe("nested project groups", () => {
     await userEvent.click(screen.getByRole("button", { name: "image-gen", exact: true }));
     await expect.element(screen.getByText("Planning").first()).not.toBeInTheDocument();
 
-    await userEvent.click(screen.getByRole("button", { name: /Auto Dungeon Master/ }));
+    await userEvent.click(screen.getByRole("button", { name: /^Auto Dungeon Master/ }));
     expect(useNestedProjectGroupsStore.getState().groups[0]!.collapsed).toBe(true);
     expect(folderNames(screen.container)).toEqual([]);
 
-    await userEvent.click(screen.getByRole("button", { name: /Auto Dungeon Master/ }));
+    await userEvent.click(screen.getByRole("button", { name: /^Auto Dungeon Master/ }));
     expect(folderNames(screen.container)).toEqual(["narrator", "image-gen"]);
     await expect.element(screen.getByText("Planning").first()).not.toBeInTheDocument();
   });
@@ -241,7 +244,7 @@ describe("nested project groups", () => {
       );
 
     await expect.element(screen.getByText(/Drag a project here/)).toBeInTheDocument();
-    await userEvent.dragAndDrop(loose, screen.getByRole("button", { name: /Other Projects/ }));
+    await userEvent.dragAndDrop(loose, screen.getByRole("button", { name: /^Other Projects/ }));
     expect(groupKeys()["group-other"]).toEqual([projectKeyOf("loose")]);
 
     // Dropping on a project header lands before it, moving between groups.
@@ -258,8 +261,8 @@ describe("nested project groups", () => {
     expect(groupKeys()["group-other"]).toEqual([]);
 
     await userEvent.dragAndDrop(
-      screen.getByRole("button", { name: /Other Projects/ }),
-      screen.getByRole("button", { name: /Auto Dungeon Master/ }),
+      screen.getByRole("button", { name: /^Other Projects/ }),
+      screen.getByRole("button", { name: /^Auto Dungeon Master/ }),
     );
     expect(useNestedProjectGroupsStore.getState().groups.map((group) => group.id)).toEqual([
       "group-other",
@@ -301,5 +304,37 @@ describe("nested project groups", () => {
     ]);
     await expect.element(screen.getByText("Auto Dungeon Master")).toBeInTheDocument();
     expect(folderNames(screen.container)[0]).toBe("narrator");
+  });
+
+  it("creates a group from the top bar and deletes one from its header after confirming", async () => {
+    using stack = new DisposableStack();
+    setup(stack, { nestedProjectGroupsEnabled: true });
+    seedGroups(adventureGroup());
+    await using screen = await render(sidebar());
+
+    await userEvent.click(screen.getByRole("button", { name: "New project group" }));
+    await userEvent.fill(screen.getByRole("textbox", { name: "Group name" }), "Spare");
+    await userEvent.keyboard("{Enter}");
+    await expect.element(screen.getByText("Spare")).toBeInTheDocument();
+    // Ungrouped Projects can't be deleted, so only the two named groups offer it.
+    expect(screen.getByRole("button", { name: /^Delete group / }).elements()).toHaveLength(2);
+
+    const deleteAdventure = screen.getByRole("button", {
+      name: "Delete group Auto Dungeon Master",
+    });
+    vi.mocked(requestConfirmDialog).mockResolvedValueOnce(false);
+    await userEvent.click(deleteAdventure);
+    expect(requestConfirmDialog).toHaveBeenCalledWith(
+      expect.stringContaining('Delete group "Auto Dungeon Master"?'),
+      { variant: "destructive" },
+    );
+    expect(useNestedProjectGroupsStore.getState().groups).toHaveLength(2);
+
+    vi.mocked(requestConfirmDialog).mockResolvedValueOnce(true);
+    await userEvent.click(deleteAdventure);
+    await expect.element(screen.getByText("Auto Dungeon Master")).not.toBeInTheDocument();
+    expect(useNestedProjectGroupsStore.getState().groups.map((group) => group.name)).toEqual([
+      "Spare",
+    ]);
   });
 });

@@ -1425,6 +1425,29 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     }
     return true;
   };
+  const deleteNestedGroupAfterConfirm = useStableCallback((groupId: string) => {
+    const api = readLocalApi();
+    const group = nestedGroups.find((candidate) => candidate.id === groupId);
+    if (!api || !group) return;
+    const count = group.projectKeys.length;
+    const moved =
+      count === 0
+        ? ""
+        : `Its ${count === 1 ? "project moves" : `${count} projects move`} to ${UNGROUPED_PROJECTS_LABEL}. `;
+    void (async () => {
+      const confirmed = await settlePromise(() =>
+        api.dialogs.confirm(
+          [
+            `Delete group "${group.name}"?`,
+            `${moved}No projects, threads, or files are deleted.`,
+          ].join("\n"),
+          { variant: "destructive" },
+        ),
+      );
+      if (confirmed._tag === "Failure" || !confirmed.value) return;
+      updateNestedProjectGroups((state) => deleteNestedProjectGroup(state, group.id));
+    })();
+  });
   const handleNestedProjectGroupContextMenu = useStableCallback(
     (groupId: string | null, position: { x: number; y: number }) => {
       const api = readLocalApi();
@@ -1471,26 +1494,9 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
             updateNestedProjectGroups((state) => moveNestedProjectGroupBy(state, group.id, offset));
             return;
           }
-          case "delete": {
-            if (!group) return;
-            const count = group.projectKeys.length;
-            const moved =
-              count === 0
-                ? ""
-                : `Its ${count === 1 ? "project moves" : `${count} projects move`} to ${UNGROUPED_PROJECTS_LABEL}. `;
-            const confirmed = await settlePromise(() =>
-              api.dialogs.confirm(
-                [
-                  `Delete group "${group.name}"?`,
-                  `${moved}No projects, threads, or files are deleted.`,
-                ].join("\n"),
-                { variant: "destructive" },
-              ),
-            );
-            if (confirmed._tag === "Failure" || !confirmed.value) return;
-            updateNestedProjectGroups((state) => deleteNestedProjectGroup(state, group.id));
+          case "delete":
+            if (group) deleteNestedGroupAfterConfirm(group.id);
             return;
-          }
         }
       })();
     },
@@ -3434,6 +3440,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                 </Combobox>
               }
               onNewProject={openAddProjectCommandPalette}
+              onNewProjectGroup={nestedProjectGroupsEnabled ? createEmptyNestedGroup : undefined}
               onNewThread={handleNewThreadClick}
               newThreadDisabled={projects.length === 0}
               newThreadShortcutLabel={newThreadShortcutLabel}
@@ -3729,7 +3736,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                                 onToggle={toggleNestedProjectGroup}
                                 onContextMenu={handleNestedProjectGroupContextMenu}
                                 onCommitRename={commitNestedGroupRename}
-                                onCreateGroup={createEmptyNestedGroup}
+                                onDeleteGroup={deleteNestedGroupAfterConfirm}
                               />,
                             );
                             for (const folder of section.folders) {

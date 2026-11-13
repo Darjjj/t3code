@@ -1,5 +1,5 @@
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/models";
-import { FolderPlusIcon } from "lucide-react";
+import { Trash2Icon } from "lucide-react";
 import { type KeyboardEvent as ReactKeyboardEvent, memo, useRef } from "react";
 
 import { cn } from "~/lib/utils";
@@ -70,7 +70,7 @@ export const SidebarProjectGroupHeader = memo(function SidebarProjectGroupHeader
   onToggle: (groupId: string | null) => void;
   onContextMenu: (groupId: string | null, position: { x: number; y: number }) => void;
   onCommitRename: (groupId: string, name: string | null) => void;
-  onCreateGroup: () => void;
+  onDeleteGroup: (groupId: string) => void;
 }) {
   const { group, collapsed, dnd } = props;
   const groupId = group?.id ?? null;
@@ -128,7 +128,12 @@ export const SidebarProjectGroupHeader = memo(function SidebarProjectGroupHeader
                           <span className="sr-only">{FOLDER_DOT_LABEL[dot]}</span>
                         </span>
                       ) : null}
-                      <span className="group-hover/project-group:invisible pointer-coarse:invisible">
+                      <span
+                        className={cn(
+                          group !== null &&
+                            "group-hover/project-group:invisible pointer-coarse:invisible",
+                        )}
+                      >
                         {props.projectCount}
                         <span className="sr-only">
                           {props.projectCount === 1 ? " project" : " projects"}
@@ -155,7 +160,7 @@ export const SidebarProjectGroupHeader = memo(function SidebarProjectGroupHeader
           Drag a project here, or choose Move to Group from its menu.
         </p>
       ) : null}
-      {props.isEditing ? null : (
+      {props.isEditing || group === null ? null : (
         // Sits over the count, which hides on hover, and left of the chevron.
         <span className="absolute top-0 right-5 flex h-8 items-center opacity-0 focus-within:opacity-100 group-hover/project-group:opacity-100 pointer-coarse:opacity-100">
           <Tooltip>
@@ -165,14 +170,14 @@ export const SidebarProjectGroupHeader = memo(function SidebarProjectGroupHeader
                   data-sidebar-action-for={rowId}
                   size="icon-xs"
                   variant="ghost-muted"
-                  aria-label="New project group"
-                  onClick={props.onCreateGroup}
+                  aria-label={`Delete group ${group.name}`}
+                  onClick={() => props.onDeleteGroup(group.id)}
                 />
               }
             >
-              <FolderPlusIcon aria-hidden />
+              <Trash2Icon aria-hidden />
             </TooltipTrigger>
-            <TooltipPopup>New project group</TooltipPopup>
+            <TooltipPopup>Delete group</TooltipPopup>
           </Tooltip>
         </span>
       )}
