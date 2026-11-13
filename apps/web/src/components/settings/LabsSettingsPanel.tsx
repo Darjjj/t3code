@@ -48,6 +48,7 @@ function BoringSidebarRow() {
       {settings.boringSidebarEnabled ? (
         <div className="mt-2 mb-2 border-l-2 border-border/60 ps-3">
           <BoringSidebarMultilineRow />
+          <NestedProjectGroupsRow />
         </div>
       ) : null}
     </SettingsRow>
@@ -69,6 +70,27 @@ function BoringSidebarMultilineRow() {
             updateSettings({ boringSidebarMultilineRows: Boolean(checked) })
           }
           aria-label="Two-line folder rows"
+        />
+      }
+    />
+  );
+}
+
+function NestedProjectGroupsRow() {
+  const settings = useScopedSettings();
+  const updateSettings = useUpdateScopedSettings();
+  return (
+    <SettingsRow
+      {...searchableSetting("nested-project-groups")}
+      className="px-0 py-2 sm:px-0"
+      description="Organize independent projects into collapsible groups within the Boring sidebar."
+      control={
+        <Switch
+          checked={settings.nestedProjectGroupsEnabled}
+          onCheckedChange={(checked) =>
+            updateSettings({ nestedProjectGroupsEnabled: Boolean(checked) })
+          }
+          aria-label="Nested Project Groups"
         />
       }
     />
