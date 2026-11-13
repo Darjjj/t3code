@@ -5,6 +5,10 @@ boring sidebar's project folders into user-defined, collapsible groups:
 **Group → Project → Threads**. It is a client-only change. It adds no server, wire-protocol, or
 database schema changes and no new dependencies.
 
+To set it up on your own Windows machine, follow
+[Building the customized app](#building-the-customized-app), then
+[Installing over the official app](#installing-over-the-official-app).
+
 ## Baseline
 
 |                 |                                                                    |
@@ -129,14 +133,85 @@ remains.
 
 ## Building the customized app
 
-The installed app auto-updates from upstream releases, so an upstream update replaces a custom
-build. To run this branch:
+An upstream release replaces a custom build, and a custom build does not auto-update. To try the
+branch without installing anything, `vp run dev:desktop` runs the Electron client from source
+with this worktree's own state directory.
 
-- **Development (no install):** `vp run dev:desktop` runs the Electron client from source with
-  this worktree's own state directory.
-- **Installer:** `vp run dist:desktop:win` (x64 NSIS) produces an installer under `release/`.
-  Installing it replaces the installed T3 Code. Back up `~/.t3/userdata` first and expect the
-  next upstream auto-update to replace it again.
+### Windows desktop build (the recipe that has worked)
+
+Build a release with the same version as the installed official app. A build that is older than
+the user's database can fail to start, so if the installed app is newer than the baseline,
+update this branch onto that release first (see Updating from upstream).
+
+1. **T3 Connect values.** Official builds embed four public values (`VITE_CLERK_PUBLISHABLE_KEY`,
+   `VITE_CLERK_JWT_TEMPLATE`, `VITE_CLERK_CLI_OAUTH_CLIENT_ID`, `VITE_T3CODE_RELAY_URL`). They
+   are in the installed app's `resources/app.asar` web bundle as `KEY:` followed by a template
+   literal. Copy them into the gitignored `.env.local` at the repository root as
+   `T3CODE_CLERK_PUBLISHABLE_KEY`, `T3CODE_CLERK_JWT_TEMPLATE`,
+   `T3CODE_CLERK_CLI_OAUTH_CLIENT_ID`, and `T3CODE_RELAY_URL`. Without them the build works, but
+   T3 Connect is off. Skip telemetry tokens.
+2. **WSL runtime.** Copy `resources/wsl-runtime.tar.gz` out of the installed app; the build
+   requires it.
+3. **Build an unpacked app directory:**
+
+   ```sh
+   T3CODE_DESKTOP_REUSE_RESOURCE_MONITOR=1 node scripts/build-desktop-artifact.ts \
+     --platform win --target dir --arch x64 --build-version <installed version> \
+     --keep-stage --output-dir <out dir> --wsl-runtime <path to wsl-runtime.tar.gz>
+   ```
+
+   It ends with `Windows packaged payload contains 90 files; expected at most 80`. That stop is
+   expected: `--keep-stage` leaves the app in `%TEMP%\t3code-desktop-win-stage-*\app\dist`.
+   Delete `win-unpacked\resources\server-compile-cache` there, which leaves about 68 files.
+
+4. **Validate** the stage with the build script's own check. Node cannot strip types under
+   `node_modules`, so save this as plain JavaScript in the gitignored
+   `scripts/node_modules/.cache/validate-win-payload.mjs` and run it with the stage's `dist`
+   directory as the argument:
+
+   ```js
+   import * as NodeServices from "@effect/platform-node/NodeServices";
+   import * as NodeRuntime from "@effect/platform-node/NodeRuntime";
+   import * as Effect from "effect/Effect";
+   import { validateWindowsPackagedPayload } from "../../build-desktop-artifact.ts";
+
+   validateWindowsPackagedPayload({
+     stageDistDir: process.argv[2],
+     appExecutableName: "T3 Code (Beta).exe",
+     targetArch: "x64",
+     appVersion: "<installed version>",
+     expectWslRuntime: true,
+     verbose: false,
+   }).pipe(
+     Effect.tap((r) => Effect.log(`OK: ${r.fileCount} files`)),
+     Effect.scoped,
+     Effect.provide(NodeServices.layer),
+     NodeRuntime.runMain,
+   );
+   ```
+
+5. Copy `win-unpacked` somewhere permanent, then delete the stage and the validator.
+
+### Installing over the official app
+
+The app lives in `%LOCALAPPDATA%\Programs\t3code`. User data lives in `~/.t3/userdata` and
+`%APPDATA%\t3code-v2`, and the swap never touches it.
+
+1. Quit T3 Code fully. Nothing may listen on 127.0.0.1:3773 or 3774. Do not kill processes by
+   name; ask the user to quit.
+2. Back up `~/.t3/userdata`, `%APPDATA%\t3code-v2`, and the app folder, and verify the copies.
+3. Rename the app folder aside (for example `t3code.official-<version>`). Copy `win-unpacked` in
+   as `t3code`, and copy the official `Uninstall T3 Code (Beta).exe` into it so the uninstaller
+   still works.
+4. Start T3 Code through Explorer or the Start menu, not from a console it would stay attached
+   to. Closing that console would quit T3. Confirm that the new exe owns 127.0.0.1:3773.
+5. Turn on Settings → Labs → Boring sidebar, then Nested Project Groups.
+
+To roll back, quit T3 Code, rename the custom folder aside, and rename the official folder back
+to `t3code`.
+
+An agent running inside T3 Code is stopped when T3 quits, so the user must run the swap from a
+standalone script or by hand.
 
 ## Reverting to upstream
 
