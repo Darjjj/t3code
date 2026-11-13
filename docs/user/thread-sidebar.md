@@ -159,6 +159,20 @@ Pinned threads stay above the folders, and Snoozed and Settled stay below them. 
 can drag a thread onto the composer to mention it, but not within the sidebar, and the Working
 section is off. Each device keeps its own choice.
 
+#### Nested project groups (beta)
+
+With the boring sidebar on, turn on **Settings → Labs → Nested Project Groups** to put project
+folders in collapsible groups. Every open project is listed, starting under **Ungrouped
+Projects**. Right-click a project and choose **Move to Group** to pick a group, create one, or
+return it to Ungrouped, or drag a project onto a group or onto another project to place it
+there. Drag a group onto another group to reorder, or use the group's menu to rename, move, or
+delete it. Deleting a group moves its projects back to Ungrouped; it never deletes projects,
+threads, or files. Groups only organize the sidebar: projects keep their folders, repositories,
+and threads.
+
+Groups and their open or closed state are saved on this device. Turning the setting off brings
+back the plain boring sidebar and keeps your groups for next time.
+
 ## Settle finished work
 
 Choose **Settle thread** from its menu to move finished work out of the active list
