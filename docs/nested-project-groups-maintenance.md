@@ -11,11 +11,11 @@ To set it up on your own Windows machine, follow
 
 ## Baseline
 
-|                 |                                                                    |
-| --------------- | ------------------------------------------------------------------ |
-| Upstream        | `https://github.com/pingdotgg/t3code`                              |
-| Baseline commit | `24e77473ecf41bc1f7142529c7911c1c1aae1d76` (desktop release 0.1.9) |
-| Branch          | `feature/nested-project-groups`                                    |
+|                 |                                                           |
+| --------------- | --------------------------------------------------------- |
+| Upstream        | `https://github.com/pingdotgg/t3code`                     |
+| Baseline commit | `24e77473ecf41bc1f7142529c7911c1c1aae1d76` (tag `v0.1.9`) |
+| Branch          | `feature/nested-project-groups`                           |
 
 The baseline is the commit the installed desktop app was built from, so a build of this branch
 differs from the installed app only by this feature.
@@ -92,21 +92,33 @@ than reintroducing the old shape.
 
 ## Updating from upstream
 
-Work in a separate worktree and never force-push this branch.
+Merge from the official repository, not from the fork you cloned. A GitHub fork's `main` does
+not follow upstream, so merging the clone's `origin/main` silently changes nothing. Merge, never
+rebase, because the branch is shared and must not be force-pushed.
 
 ```sh
-git fetch origin
+git remote add upstream https://github.com/pingdotgg/t3code.git   # once; skip if it exists
+git fetch upstream --tags
 git switch feature/nested-project-groups
-git switch -c feature/nested-project-groups-update   # keep the original branch intact
-git merge origin/main          # or: git rebase origin/main
+git switch -c feature/nested-project-groups-update   # keep the working branch intact
+git merge v0.1.10                                    # the release to match (see below)
 ```
 
-If upstream changed the boring sidebar, resolve conflicts in `Sidebar.tsx` by re-applying the
-touch points listed above to the new code. Then rerun verification. If an update turns out
-broken, delete the update branch; `feature/nested-project-groups` is unchanged.
+**Which commit to merge.** Merge the official release tag that matches the version the user has
+installed, or wants to install: `v<version>`, for example `v0.1.10`. List the releases with
+`gh release list -R pingdotgg/t3code`. Stable releases are tagged `v0.1.9`, `v0.1.10`, and so
+on; nightly builds are `v<version>-nightly.<date>.<n>`. The baseline above is exactly `v0.1.9`.
+Use `upstream/main` only for unreleased code. To find the exact commit of an installed build,
+read `t3codeCommitHash` from the `package.json` inside its `resources/app.asar`.
 
-To track a specific desktop release instead of `main`, merge the commit in that release's
-`app.asar` `package.json` (`t3codeCommitHash`).
+If upstream changed the boring sidebar, resolve conflicts in `Sidebar.tsx` by re-applying the
+touch points listed above to the new code. A merge without conflicts can still break, so always
+rerun verification, then build with `--build-version` set to the new version.
+
+When the update passes, fast-forward the working branch to it
+(`git switch feature/nested-project-groups && git merge --ff-only feature/nested-project-groups-update`)
+and update the Baseline table. If it turns out broken, delete the update branch;
+`feature/nested-project-groups` is unchanged.
 
 ## Verification
 
@@ -217,7 +229,7 @@ standalone script or by hand.
 
 - **In the app:** turn off Settings → Labs → Nested Project Groups. The sidebar returns to the
   plain boring layout immediately, and saved groups stay in `localStorage`.
-- **In code:** use the upstream commit (`git switch --detach 24e77473ec` or `origin/main`), or
+- **In code:** use the upstream commit (`git switch --detach v0.1.9` or a newer release tag), or
   revert this branch's commits with `git revert`.
 - **Installed app:** reinstall the official release from https://t3.codes. Groups remain in
   `localStorage` but unused. Upstream builds ignore the `nestedProjectGroupsEnabled` client
